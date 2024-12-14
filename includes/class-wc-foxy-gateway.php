@@ -179,6 +179,14 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
                     'required' => 'true',
                 ],
             ],
+            'webhook_signature' => [
+                'title' => __('Webhook Signature', 'foxy'),
+                'type' => 'password',
+                'description' => __('Foxy webhook signature set while adding webhooks in Foxy admin.', 'foxy'),
+                'custom_attributes' => [
+                    'required' => 'true',
+                ],
+            ],
             'title' => array(
                 'title' => __('Title', $this->id),
                 'type' => 'textarea',

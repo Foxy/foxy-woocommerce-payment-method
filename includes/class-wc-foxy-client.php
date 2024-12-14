@@ -53,7 +53,8 @@ class Foxy_Response {
 }
 
 class Foxy_Client {
-    private $base_url_test = "https://api.foxycartdev.com";//"https://api.foxycart.test";
+    private $base_url_test = "https://api.foxycart.test";
+    // private $base_url_test = "https://api.foxycartdev.com";
     private $base_url_live = "https://api.foxycart.com";
     private $access_token;
     private $auth_token;
@@ -91,7 +92,7 @@ class Foxy_Client {
     }
 
     private function init_store() {
-        $api_home_response = $this->make_foxy_request($this->get_foxy_base_url(), 'GET');echo '<pre>';print_r($api_home_response);die;
+        $api_home_response = $this->make_foxy_request($this->get_foxy_base_url(), 'GET');
         $store_uri = $api_home_response->data["_links"]["fx:store"]["href"];
 
         $store_home_response = $this->make_foxy_request($store_uri, 'GET');

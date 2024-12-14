@@ -11,21 +11,9 @@ final class WC_Gateway_Foxy_Blocks_Support extends AbstractPaymentMethodType {
     public $client;
 
     public function initialize(): void { 
-        //echo 'aaya';die;
         $this->settings = get_option( 'woocommerce_foxy_settings', [] );
 		$gateways       = WC()->payment_gateways->payment_gateways();
 		$this->gateway  = $gateways[ $this->name ];
-        // $this->settings = get_option( 'woocommerce_foxy_settings', [] );
-        
-        // $gateways = WC()->payment_gateways->payment_gateways();
-		// $this->gateway  = $gateways[ $this->name ];
-
-        // $this->gateway = new Foxy_Payment_Gateway();
-        // $client_id = $this->gateway->get_option('client_id');
-        // echo $client_id;die;
-        // $client_secret = $this->gateway->get_option('client_secret');
-
-        // $this->client = new WigWag_Client($client_id, $client_secret);
     }
 
     public function is_active(): bool {
@@ -44,7 +32,6 @@ final class WC_Gateway_Foxy_Blocks_Support extends AbstractPaymentMethodType {
 			);
 
         $script_url = FOXY_PLUGIN_URL . $script_path;
-        // echo $script_url;die;
         $dependencies = [];
         wp_register_script(
             'wc-foxy-payments-blocks',
@@ -54,18 +41,11 @@ final class WC_Gateway_Foxy_Blocks_Support extends AbstractPaymentMethodType {
 			true
         );
 
-        // wp_enqueue_style(
-        //     'wigwag-blocks-checkout-style',
-        //     FOXY_PLUGIN_URL.'/build/index.css',
-        //     [],
-        //     filemtime(FOXY_PLUGIN_PATH.'/build/index.css')
-        // );
         if ( function_exists( 'wp_set_script_translations' ) ) {
 			wp_set_script_translations( 'wc-foxy-payments-blocks', 'woocommerce-gateway-foxy', FOXY_PLUGIN_PATH . 'languages/' );
 		}
 
 		return [ 'wc-foxy-payments-blocks' ];
-        // return ['wc-foxy-blocks-integration'];
     }
 
     	/**

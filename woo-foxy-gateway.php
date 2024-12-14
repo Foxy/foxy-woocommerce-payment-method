@@ -109,24 +109,25 @@ function foxy_register_rest_api_routes(): void {
 function foxy_transaction_webhook(WP_REST_Request $request) {
     $data = file_get_contents('php://input');
     $parsed_data = json_decode($data, true);
+    
     $event = $_SERVER['HTTP_FOXY_WEBHOOK_EVENT'];
     $settings = get_option( 'woocommerce_foxy_settings', [] );
     
     $logger = wc_get_logger();
 
-    $webhook_encryption_key = 'xyz';
+    $webhook_encryption_key = $settings['webhook_signature'];
     // Verify the webhook payload
     $signature = hash_hmac('sha256', $data, $webhook_encryption_key);
 
     // will unlock this later
-    // if (!hash_equals($signature, $_SERVER['HTTP_FOXY_WEBHOOK_SIGNATURE'])) {
-    //     http_response_code(500);
-    //     return new WP_REST_Response(
-    //         "Signature verification failed - data corrupted",
-    //         500,
-    //         []
-    //     );
-    // }
+    if (!hash_equals($signature, $_SERVER['HTTP_FOXY_WEBHOOK_SIGNATURE'])) {
+        http_response_code(500);
+        return new WP_REST_Response(
+            "Signature verification failed - data corrupted",
+            500,
+            []
+        );
+    }
 
     if (!is_array($parsed_data)) {
         return get_wp_rest_response("No data", 500);
@@ -138,6 +139,11 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
      */
     $foxy_transaction_id = $parsed_data["id"];
     $logger->debug("Got Foxy transaction webhook `$event` for #$foxy_transaction_id", ['source' => ' foxy-logs']);
+
+    if (!in_array($event, ['transaction/created', 'transaction/modified', 'transaction/captured', 'transaction/refunded', 'transaction/voided', 'transaction/refeed'])) {
+        $logger->error("Received unsupported webhook `$event` for transaction #$foxy_transaction_id", ['source' => ' foxy-logs']);
+        return get_wp_rest_response("webhook not supported", 400);
+    }
 
     $args = array(
         'meta_key'      => 'foxy_transaction_id',
@@ -185,29 +191,49 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
     }
 
     $order = $orders[0];
+    
+    if (update_order_status($order, $parsed_data['status'], $foxy_transaction_id)) {
+        return get_wp_rest_response("OK");
+    }
+}
+
+function update_order_status($order, $foxy_transaction_status, $foxy_transaction_id) {
+    $logger = wc_get_logger();
     $order_status = "";
-    switch ($event) {
-        case "transaction/captured":
+    switch (strtolower($foxy_transaction_status)) {
+        case "captured":
+        case "approved":
+        case "authorized":
             $order_status = "completed";
             break;
-        case "transaction/refunded";
+        case "rejected":
+        case "declined":
+            $order_status = "failed";
+            break;
+        case "refunded":
+        case "voided":
             $order_status = "refunded";
             break;
-        case "transaction/voided";
-            $order_status = "refunded";
+        case "pending";
+            $order_status = "processing";
             break;
     }
 
-    if ($order_status) {
-        if ($order->update_status( $order_status )) {
-            $logger->debug("Order status for #$foxy_transaction_id changed to $order_status", ['source' => ' foxy-logs']);
-            return get_wp_rest_response("Order status for #$foxy_transaction_id changed to $order_status");
-        }
-    } else {
-        $logger->error("Received unsupported webhook $event for transaction #$foxy_transaction_id", ['source' => ' foxy-logs']);
-        return get_wp_rest_response("webhook not supported", 400);
+    if (empty($order_status)) {
+        $logger->warning("Order status `$order_status` not supported", ['source' => ' foxy-logs']);
+        return false;
     }
-}
+
+    $wc_order_id = $order->get_id();
+    if ($order->update_status( $order_status )) {
+        $logger->debug("Order status for #$wc_order_id (Foxy transaction #$foxy_transaction_id) changed to $order_status", ['source' => ' foxy-logs']);  
+    } else {
+        $logger->error("Something went wrong while updating the status for #$wc_order_id (Foxy transaction #$foxy_transaction_id) to $order_status", ['source' => ' foxy-logs']);
+        return false;
+    }
+
+    return true;
+} 
 
 /**
  * Rest api endpoint handler function
@@ -303,7 +329,7 @@ function foxy_handle_callback(WP_REST_Request $request): WP_REST_Response {
         $payment_status = $foxy_client->get_payment_status($foxy_transaction_id);
 
         if (!$payment_status) {
-            $logger->error('error while checking the status of transaction', ['source' => ' foxy']);
+            $logger->error('error while checking the status of transaction', ['source' => ' foxy-logs']);
             wc_add_notice('Something went wrong. Please contact the store.', 'error');
             return foxy_generate_webhook_response($order->get_view_order_url());
         }
@@ -312,16 +338,16 @@ function foxy_handle_callback(WP_REST_Request $request): WP_REST_Response {
         wc_add_notice('Failed to check status of your payment. Please contact the store.', 'error');
         return foxy_generate_webhook_response($order->get_view_order_url());
     }
+    $wc_order_id = $order->get_id();
+    $logger->debug("Payment status is `$payment_status` for transaction #$foxy_transaction_id (WC Order #$wc_order_id)", ['source' => ' foxy-logs']);
 
-    if ($payment_status !== 'captured') {
-        $logger->warning("Unpaid status ({$payment_status}) for transaction ID {$foxy_transaction_id}", ['source' => ' foxy']);
+    update_order_status($order, $payment_status, $foxy_transaction_id);
+
+    if (!in_array($payment_status, ['captured', 'approved', 'authorized'])) {
+        $logger->warning("Unpaid status ({$payment_status}) for transaction ID {$foxy_transaction_id}", ['source' => ' foxy-logs']);
         wc_add_notice('Payment not completed', 'error');
-
         return foxy_generate_webhook_response($order->get_view_order_url());
     }
-
-    $order->payment_complete($foxy_transaction_id);
-    $order->save();
 
     return foxy_generate_webhook_response($order->get_checkout_order_received_url());
 }
