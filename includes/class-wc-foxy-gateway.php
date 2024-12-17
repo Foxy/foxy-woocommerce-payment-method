@@ -175,14 +175,6 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
                     'required' => 'true',
                 ],
             ],
-            'store_secret' => [
-                'title' => __('Store Secret', 'foxy'),
-                'type' => 'password',
-                'description' => __('Foxy Secret Store which can be found on advanced settings page in Foxy admin. This will be used for SSO.', 'foxy'),
-                'custom_attributes' => [
-                    'required' => 'true',
-                ],
-            ],
             'webhook_signature' => [
                 'title' => __('Webhook Signature', 'foxy'),
                 'type' => 'password',

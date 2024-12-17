@@ -240,13 +240,11 @@ function update_order_status($order, $foxy_transaction_status, $foxy_transaction
  * for handling foxy SSO
  */
 function foxy_handle_sso(WP_REST_Request $request) {
-    $settings = get_option( 'woocommerce_foxy_settings', [] );
-
     $foxy_payment_session_data = WC()->session->get('foxy_payment_session');
-
     $foxy_customer_id = $foxy_payment_session_data['customer_id'];
-    $timestamp = time() + 300;
-    $foxycart_secret_key = $settings['store_secret'];
+    
+    $timestamp = time() + 600;
+    $foxycart_secret_key = get_transient('foxy_store_secret');
     $auth_token = sha1($foxy_customer_id . '|' . $timestamp . '|' . $foxycart_secret_key);
 
     $foxy_payment_link = $foxy_payment_session_data['payment_link'] . '&' . http_build_query([

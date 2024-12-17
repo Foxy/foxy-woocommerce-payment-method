@@ -98,6 +98,9 @@ class Foxy_Client {
         $store_home_response = $this->make_foxy_request($store_uri, 'GET');
         $this->customers_uri = $store_home_response->data["_links"]["fx:customers"]["href"];
         $this->carts_uri = $store_home_response->data["_links"]["fx:carts"]["href"];
+
+        // this transient will be used for SSO purpose
+        set_transient('foxy_store_secret', $store_home_response->data["webhook_key"], DAY_IN_SECONDS);
     }
     
     public function get_foxy_base_url() {
@@ -457,11 +460,8 @@ class Foxy_Client {
                 ]);
             }
 
-            // $timestamp = time() + 10;
-            // $timestamp = time() + 300;
-            $timestamp = time() + 345600;
-            $options = $this->get_foxy_settings();
-            $foxycart_secret_key = $options['store_secret'];
+            $timestamp = time() + 600;
+            $foxycart_secret_key = get_transient('foxy_store_secret');
 
             $auth_token = sha1($foxy_customer_id . '|' . $timestamp . '|' . $foxycart_secret_key);
             $payment_link = $session_response->data["cart_link"];
