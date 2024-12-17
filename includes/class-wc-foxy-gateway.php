@@ -113,11 +113,15 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
     public function admin_options(): void {
         parent::admin_options();
         ?>
-            <h4>Redirect URL</h4>
-            <p>Make sure to add this as a redirect URL on your Foxy account page</p>
-            <p>
-                <?php echo site_url('index.php'); ?>
-            </p>
+            <h4>Please add following configuration in your Foxy Admin:</h4>
+            <ol>
+                <li>
+                    Add <code><?php echo site_url('index.php') . '?rest_route=/foxy/v1/sso'; ?></code> as SSO URL under advanced settings
+                </li>
+                <li>
+                    Add <code><?php echo site_url('index.php') . '/foxy/v1/callback&fc_order_id=`${FC.json.order_id}`'; ?></code> as redirect URL in web receipt settings
+                </li>
+            </ol>
         <?php
     }
 
@@ -132,7 +136,7 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
             'is_test' => [
                 'title' => __('Is Test', 'foxy'),
                 'type' => 'checkbox',
-                'label' => __('Using Foxy payments in test mode?', 'foxy'),
+                'label' => __('Using Foxy payments in test mode?(only for local testing, need to remove before finalizing)', 'foxy'),
                 'default' => 'yes',
             ],
             'client_id' => [
@@ -174,7 +178,7 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
             'store_secret' => [
                 'title' => __('Store Secret', 'foxy'),
                 'type' => 'password',
-                'description' => __('Foxy Secret Store which can be found on advanced settings page in Foxy admin.', 'foxy'),
+                'description' => __('Foxy Secret Store which can be found on advanced settings page in Foxy admin. This will be used for SSO.', 'foxy'),
                 'custom_attributes' => [
                     'required' => 'true',
                 ],
@@ -182,7 +186,7 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
             'webhook_signature' => [
                 'title' => __('Webhook Signature', 'foxy'),
                 'type' => 'password',
-                'description' => __('Foxy webhook signature set while adding webhooks in Foxy admin.', 'foxy'),
+                'description' => __('Foxy webhook signature set while adding webhooks in Foxy admin. This will be used to verify Foxy webhook payloads.', 'foxy'),
                 'custom_attributes' => [
                     'required' => 'true',
                 ],
@@ -198,13 +202,7 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
                 'type' => 'textarea',
                 'description' => __('This controls the description which the user sees during checkout.', $this->id),
                 'default' => __(static::DEFAULT_DESCRIPTION, $this->id)
-            ),
-            'skip_checkout' => [
-                'title' => __('Skip Checkout Page', 'foxy'),
-                'type' => 'checkbox',
-                'label' => __('Skip the Foxy checkout page', 'foxy'),
-                'default' => 'yes',
-            ],
+            )
         ];
     }
 

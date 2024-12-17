@@ -220,7 +220,7 @@ function update_order_status($order, $foxy_transaction_status, $foxy_transaction
     }
 
     if (empty($order_status)) {
-        $logger->warning("Order status `$order_status` not supported", ['source' => ' foxy-logs']);
+        $logger->warning("Order status `$foxy_transaction_status` not supported", ['source' => ' foxy-logs']);
         return false;
     }
 
@@ -283,13 +283,13 @@ function foxy_handle_sso(WP_REST_Request $request) {
  * For testing only.
  * This will add minutes for subscription renewal periods
  */
-function eg_extend_subscription_period_intervals( $intervals ) {
-    $logger = wc_get_logger();
-    $logger->error(json_encode($intervals), ['source' => ' options']);
-    $intervals['minute'] = 'minutes';
-    return $intervals;
-}
-add_filter( 'woocommerce_subscription_available_time_periods', 'eg_extend_subscription_period_intervals' );
+// function eg_extend_subscription_period_intervals( $intervals ) {
+//     $logger = wc_get_logger();
+//     $logger->error(json_encode($intervals), ['source' => ' options']);
+//     $intervals['minute'] = 'minutes';
+//     return $intervals;
+// }
+// add_filter( 'woocommerce_subscription_available_time_periods', 'eg_extend_subscription_period_intervals' );
 
 /**
  * Rest api endpoint handler function

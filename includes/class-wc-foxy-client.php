@@ -125,8 +125,9 @@ class Foxy_Client {
     }
 
     public function update_customer($customer_data) {
-        $user_meta = get_user_meta($customer_data["id"], "foxy-customer-id");
-        // need to check this later. Might be that get_user_meta() return boolean false if no meta data found which will throw exception. If it returns empty array then this is okay
+        $wc_customer_id = $customer_data["id"];
+        $user_meta = get_user_meta($wc_customer_id, "foxy-customer-id");
+        
         $foxy_customer_id = count($user_meta) ? $user_meta[0] : "";
 
         if ($foxy_customer_id) {
@@ -136,17 +137,62 @@ class Foxy_Client {
                 "last_name" => $customer_data["last_name"]
             ];
 
-            try {
-                $response = $this->make_foxy_request($this->get_foxy_base_url() . "/customers/$foxy_customer_id", 'PATCH', $data);
-                $this->logger->log('debug', "Foxy Customer #$foxy_customer_id updated", array( 'source' => 'foxy-logs' ));
-            } catch (Foxy_Failed_Request_Exception $e) {   
-                $this->logger->log('debug', $e->getMessage(), array( 'source' => 'foxy-logs' ));
-            }
+            $response = $this->make_foxy_request($this->get_foxy_base_url() . "/customers/$foxy_customer_id", 'PATCH', $data);
+            $this->logger->debug("Foxy Customer #$foxy_customer_id (WC #$wc_customer_id) updated", array( 'source' => 'foxy-logs' ));
         } else {
-            return $this->create_customer($customer_data);
+            $foxy_customer_id = $this->create_customer($customer_data);
         }
 
-        return;
+        if (!$foxy_customer_id) {
+            throw new Exception("Foxy customer Id not found for WC customer #$wc_customer_id");
+            return false;
+        }
+
+        $this->update_default_addresses($foxy_customer_id, $customer_data);
+    }
+
+    public function update_default_addresses($foxy_customer_id, $customer_data) {
+
+        if (!$foxy_customer_id) {
+            return;
+        }
+
+        $wc_customer_id = $customer_data["id"];
+        if (array_key_exists("billing", $customer_data)) {
+            try {
+                $foxy_billing_address = $this->prepare_address_data($customer_data["billing"]);
+                $this->make_foxy_request($this->get_foxy_base_url() . "/customers/$foxy_customer_id/default_billing_address", 'PATCH', $foxy_billing_address);
+                $this->logger->debug("Updated default billing address for Foxy Customer #$foxy_customer_id (WC #$wc_customer_id)", array( 'source' => 'foxy-logs' ));
+            } catch (Exception $e) {
+                $this->logger->error("Something went wrong while updating default billing address for Foxy Customer #$foxy_customer_id (WC #$wc_customer_id)", array( 'source' => 'foxy-logs' ));
+            }
+        }
+
+        if (array_key_exists("shipping", $customer_data)) {
+            try {
+                $foxy_shipping_address = $this->prepare_address_data($customer_data["shipping"]);
+                $this->make_foxy_request($this->get_foxy_base_url() . "/customers/$foxy_customer_id/default_shipping_address", 'PATCH', $foxy_shipping_address);
+                $this->logger->debug("Updated default shipping address for Foxy Customer #$foxy_customer_id (WC #$wc_customer_id)", array( 'source' => 'foxy-logs' ));
+            } catch (Exception $e) {
+                $this->logger->error("Something went wrong while updating default shipping address for Foxy Customer #$foxy_customer_id (WC #$wc_customer_id)", array( 'source' => 'foxy-logs' ));
+            }
+        }
+    }
+
+    public function prepare_address_data($address) {
+        $foxy_address = [];
+        $foxy_address["first_name"] = $address["first_name"];
+        $foxy_address["last_name"] = $address["last_name"];
+        $foxy_address["company"] = $address["company"];
+        $foxy_address["address1"] = $address["address_1"];
+        $foxy_address["address2"] = $address["address_2"];
+        $foxy_address["city"] = $address["city"];
+        $foxy_address["region"] = $address["state"];
+        $foxy_address["postal_code"] = $address["postcode"];
+        $foxy_address["country"] = $address["country"];
+        $foxy_address["phone"] = $address["phone"];
+
+        return $foxy_address;
     }
 
     public function delete_customer($customer_data) {
@@ -298,17 +344,15 @@ class Foxy_Client {
             $response = $this->make_foxy_request($foxy_subscription_link, 'PATCH', ['past_due_amount' => $amount]);
             
             if ($response->status_code == 200) {
-                $this->logger->log('debug', "Past due sent for subscription <b>#$subscription_id</b> (Foxy subscription <b>#$foxy_subscription_id</b>)", array( 'source' => 'foxy-logs' ));
-                $past_due_charge_link = $response->data["_links"]["fx:charge_past_due"]["href"];
+                $this->logger->debug("Past due sent for subscription #$subscription_id (Foxy subscription #$foxy_subscription_id)", array( 'source' => 'foxy-logs' ));
+                $past_due_charge_link = array_key_exists("fx:charge_past_due", $response->data["_links"]) ? $response->data["_links"]["fx:charge_past_due"]["href"] : "";
 
-                if (!$past_due_charge_link) {
-                    $this->logger->log('debug', "No past due charge found for subscription #$subscription_id (Foxy subscription #$foxy_subscription_id)", array( 'source' => 'foxy-logs' ));
+                if (empty($past_due_charge_link)) {
+                    $this->logger->debug("No past due charge found for subscription #$subscription_id (Foxy subscription #$foxy_subscription_id)", array( 'source' => 'foxy-logs' ));
+                    return;
                 }
                 
                 $this->make_foxy_request($past_due_charge_link, 'POST');
-            } else {
-                // need to clean. This code will never execute because make_foxy_request will throw exception on non 200 responses
-                $this->logger->log('error', "Subscription past due sending failed on Foxy for subscription #$subscription_id (Foxy subscription #$foxy_subscription_id)", array( 'source' => 'foxy-logs' ));
             }
         }  catch (Exception $e) {   
             $renewal_order->update_status( 'failed', __( 'Subscription renewal failed on Foxy.', 'woocommerce-gateway-foxy' ) );
@@ -340,7 +384,7 @@ class Foxy_Client {
             $cancellation_endpoint = $status == 'voided' ? $transaction_response->data["_links"]["fx:void"]["href"] : $transaction_response->data["_links"]["fx:refund"]["href"];
 
             if (!$cancellation_endpoint) {
-                \WC_Admin_Notices::add_custom_notice( "foxy-order-status-change-not-allowed", "WC order #$order_id was updated to <b>$status</b> but this action is now allowed in Foxy (Foxy Transaction #$foxy_transaction_id)" );
+                \WC_Admin_Notices::add_custom_notice( "foxy-order-status-change-not-allowed", "WC order <b>#$order_id</b> was updated to <b>$status</b> but this action is not allowed in Foxy (Foxy Transaction <b>#$foxy_transaction_id</b>)" );
                 $this->logger->error("<b>$foxy_status</b> action not allowed for Foxy transaction #$foxy_transaction_id", ['source' => 'foxy-logs']);
                 return;
             }
@@ -348,14 +392,12 @@ class Foxy_Client {
             $status_change_response = $this->make_foxy_request($cancellation_endpoint, "POST");
             if ($status_change_response->status_code == '200') {
                 $this->logger->debug("Foxy transaction #$foxy_transaction_id was $status", ['source' => 'foxy-logs']);    
-            } else {
-                \WC_Admin_Notices::add_custom_notice( "foxy-order-status-change-error", "WC order #$order_id was updated to <b>$status</b> but failed to update the status in Foxy (Foxy Transaction #$foxy_transaction_id)" );
-                $this->logger->error("Something went wrong while changing the status of Foxy transaction #$foxy_transaction_id (WC #$order_id)", ['source' => 'foxy-logs']);    
             }
 
         } catch (Exception $exception) {
             \WC_Admin_Notices::add_custom_notice( "foxy-order-status-change-error", "WC order #$order_id was updated to <b>$status</b> but failed to update the status in Foxy" );
             $this->logger->error($exception->getMessage(), ['source' => 'foxy-logs']);
+            $this->logger->error("Something went wrong while changing the status of Foxy transaction #$foxy_transaction_id (WC #$order_id) to $status", ['source' => 'foxy-logs']);    
         }
     }
 
