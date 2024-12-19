@@ -111,15 +111,13 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
     $parsed_data = json_decode($data, true);
     
     $event = $_SERVER['HTTP_FOXY_WEBHOOK_EVENT'];
-    $settings = get_option( 'woocommerce_foxy_settings', [] );
     
     $logger = wc_get_logger();
 
-    $webhook_encryption_key = $settings['webhook_signature'];
+    $webhook_encryption_key = get_transient('foxy_webhook_encryption_key');
     // Verify the webhook payload
     $signature = hash_hmac('sha256', $data, $webhook_encryption_key);
 
-    // will unlock this later
     if (!hash_equals($signature, $_SERVER['HTTP_FOXY_WEBHOOK_SIGNATURE'])) {
         http_response_code(500);
         return new WP_REST_Response(

@@ -101,6 +101,40 @@ class Foxy_Client {
 
         // this transient will be used for SSO purpose
         set_transient('foxy_store_secret', $store_home_response->data["webhook_key"], DAY_IN_SECONDS);
+        $this->init_transaction_webhook($store_home_response->data["_links"]["fx:webhooks"]["href"]);
+    }
+
+    public function init_transaction_webhook($webhook_uri) {
+        $webhook_response = $this->make_foxy_request($webhook_uri, 'GET');
+        $all_webhooks = $webhook_response->data["_embedded"]["fx:webhooks"];
+        $webhook_url = site_url('index.php') . '?rest_route=/foxy/v1/webhook/transaction';
+        $webhook_name = "WC_Store_Transaction_Webhook";
+        $webhook_format = "json";
+        $webhook_resource = "transaction";
+        $wc_webhooks = array_filter($all_webhooks, function($webhook) use($webhook_name, $webhook_format, $webhook_resource, $webhook_url) {
+            return $webhook["format"] == $webhook_format 
+                    && $webhook["name"] == $webhook_name
+                    && $webhook["event_resource"] ==  $webhook_resource
+                    && $webhook["url"] == $webhook_url;
+        });
+        
+        if (count($wc_webhooks) === 0) {
+            $encryption_key = wp_generate_password(32);
+            $data = [
+                "name" => $webhook_name,
+                "format" => $webhook_format,
+                "url" => $webhook_url,
+                "encryption_key" => $encryption_key,
+                "event_resource" => $webhook_resource
+            ];
+            $response = $this->make_foxy_request($webhook_uri, 'POST', $data);
+            if ($response->status_code == '201') {
+                set_transient('foxy_webhook_encryption_key', $encryption_key, DAY_IN_SECONDS);
+            }
+       } else {
+            $encryption_key = reset($wc_webhooks)["encryption_key"];
+            set_transient('foxy_webhook_encryption_key', $encryption_key, DAY_IN_SECONDS);
+       }
     }
     
     public function get_foxy_base_url() {
