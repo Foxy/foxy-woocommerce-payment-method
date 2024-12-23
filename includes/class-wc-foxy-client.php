@@ -101,7 +101,22 @@ class Foxy_Client {
 
         // this transient will be used for SSO purpose
         set_transient('foxy_store_secret', $store_home_response->data["webhook_key"], DAY_IN_SECONDS);
+
+        // Initialize the transaction webhook 
         $this->init_transaction_webhook($store_home_response->data["_links"]["fx:webhooks"]["href"]);
+
+        // Check if SSO is enabled and enable it and set URL if not
+        $this->init_sso($store_home_response->data, $store_uri);
+    }
+
+    public function init_sso($store_data, $store_uri) {
+        $sso_url = site_url('index.php') . '?rest_route=/foxy/v1/sso';
+        if (!$store_data["use_single_sign_on"] || $store_data["single_sign_on_url"] != $sso_url) {
+            $store_response = $this->make_foxy_request($store_uri, "PATCH", [
+                "use_single_sign_on" => true,
+                "single_sign_on_url" => $sso_url
+            ]);
+        }
     }
 
     public function init_transaction_webhook($webhook_uri) {
