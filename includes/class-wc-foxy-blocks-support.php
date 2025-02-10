@@ -55,11 +55,9 @@ final class Foxy_Blocks_Support extends AbstractPaymentMethodType {
 
 
     public function get_payment_method_data(): array {
-        // require ($script_asset_path)
-
         $icon_url = FOXY_PLUGIN_URL.'/assets/foxy-logo.png';
         return [
-            'title' => 'Foxy for WooCommerce',
+            'title' => $this->settings['title'],
             'description' => $this->settings['description'],
             'icon_url' => $icon_url,
             'button' => [

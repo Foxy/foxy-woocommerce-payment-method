@@ -84,7 +84,13 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
             try {
                 $foxy_client = Foxy_Client::get_instance();
                 $foxy_subscription_id = $foxy_client->get_foxy_subscription_id_from_wc_subscription($subscription);
-                $foxy_client->cancel_subscription($foxy_subscription_id);
+
+                if ($foxy_subscription_id) {
+                    $this->logger->debug("send foxy subscription #$foxy_subscription_id for cancellation", ['source' => 'foxy-logs']);
+                    $foxy_client->cancel_subscription($foxy_subscription_id);
+                } else {
+                    $this->logger->debug("foxy subscription not found for WC Subscription #" . $subscription->get_id(), ['source' => 'foxy-logs']);
+                }
             } catch (Exception $exception ) {
                 $this->logger->error($exception->getMessage(), ['source' => 'foxy-logs']);
             }
@@ -186,7 +192,13 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
                 'type' => 'textarea',
                 'description' => __('This controls the description which the user sees during checkout.', $this->id),
                 'default' => __(static::DEFAULT_DESCRIPTION, $this->id)
-            )
+            ),
+            // 'allowed_redirect_hosts' => array(
+            //     'title' => __('Allowed Redirection Hosts', $this->id),
+            //     'type' => 'textarea',
+            //     'description' => __('This controls which redirections are allowed outside of WooCommerce website. For example redirection to Foxy page for payment. In case of multiple URLs separate them by comma.', $this->id),
+            //     'default' => __('wilson.foxycart.com, wilson.foxycart.test, solaridev.foxycart.com, solaridevtest.foxycart.com, solari.foxycart.com', $this->id)
+            // ),
         ];
     }
 
@@ -210,17 +222,21 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
 	}
 
     public function process_payment($order_id) {
-        $order = new WC_Order($order_id);
-        $order->update_status('awaiting-payment', __('Awaiting payment', 'woocommerce'));
-        
         try {
             $foxy_client = Foxy_Client::get_instance();
-            $url = $foxy_client->create_foxy_payment_link($order);
+            if (wcs_is_subscription($order_id)) {
+                $subscription_id = $order_id;
+                $url = $foxy_client->create_foxy_payment_link($subscription_id, true);
+            } else {
+                $url = $foxy_client->create_foxy_payment_link($order_id);
+            }
         } catch (Exception $exception) {
-            $this->handle_api_error($exception, 'Payment failed. Please try again later.');
+            $error_message = wcs_is_subscription($order_id) ? 'Payment method change failed. Please try again later.' : 'Payment failed. Please try again later.';
+            $this->handle_api_error($exception, $error_message);
             return null;
         }
 
+        $this->logger->debug($url, ['source' => 'foxy-logs']);
         return [
             'result' => 'success',
             'redirect' => $url

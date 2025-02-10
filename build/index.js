@@ -4,15 +4,24 @@ const foxyContent = () => {
     return window.wp.htmlEntities.decodeEntities(foxySettings.description || '');
 };
 
-// const Label = props => {
-//     const { PaymentMethodLabel } = props.components;
-//     const icon = <img src={iconUrl} alt={title} name={title} />
-//     return <PaymentMethodLabel className='kp-block-label' text={title} icon={icon} />;
-// };
+const icon = foxySettings.icon_url;
+wpElement = window.wp.element;
 
 const Foxy_Block_Gateway = {
     name: 'foxy',
-    label: foxyLabel,
+    label: wpElement.createElement(() =>
+        wpElement.createElement(
+          "div",
+          {
+            style:{display: 'flex', 'justify-content': 'space-between', width: '98%'}
+          },
+          wpElement.createElement("span", null, foxyLabel),
+          wpElement.createElement("img", {
+            src: icon,
+            alt: foxyLabel,
+          })
+        )
+      ),
     content: Object(window.wp.element.createElement)(foxyContent, null ),
     edit: Object(window.wp.element.createElement)(foxyContent, null ),
     canMakePayment: () => true,

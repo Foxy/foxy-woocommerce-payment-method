@@ -287,6 +287,24 @@ function foxy_handle_sso(WP_REST_Request $request) {
 // }
 // add_filter( 'woocommerce_subscription_available_time_periods', 'eg_extend_subscription_period_intervals' );
 
+
+ function foxy_handle_payment_method_change($foxy_payment_session_data, $request) {
+    $logger = wc_get_logger();
+    $foxy_transaction_id = $request->get_param('fc_order_id');
+    $wc_subscription_id = $foxy_payment_session_data['wc_subscription_id'];
+
+    $subscription = new WC_Subscription($wc_subscription_id);
+    
+    if ($foxy_payment_session_data['foxy_transaction_id'] != $foxy_transaction_id || $subscription->get_meta('foxy_transaction_id') != $foxy_transaction_id) {
+        $logger->error("Order not found for Foxy Transaction ID: {$foxy_transaction_id}", ['source' => ' foxy-logs']);
+        wc_add_notice('Order not found', 'error');
+
+        return foxy_generate_webhook_response(home_url() . "/my-account/subscriptions/");
+    }
+
+    return foxy_generate_webhook_response(home_url() . "/my-account/subscriptions/");
+ }
+
 /**
  * Rest api endpoint handler function
  * for handling the redirection from foxy after payment is done
@@ -296,14 +314,20 @@ function foxy_handle_callback(WP_REST_Request $request): WP_REST_Response {
     $foxy_transaction_id = $request->get_param('fc_order_id');
     $logger->debug("Got back from Foxy for Transaction ID: {$foxy_transaction_id}", ['source' => ' foxy-logs']);
 
+    $foxy_payment_session_data = WC()->session->get('foxy_payment_session');
+    WC()->session->__unset('foxy_payment_session');
+
+    // user is returning to wc page to change the payment method to foxy
+    if (array_key_exists('change_payment_method', $foxy_payment_session_data) && $foxy_payment_session_data['change_payment_method']) {
+        return foxy_handle_payment_method_change($foxy_payment_session_data, $request);
+    }
+
     $args = array(
         'meta_key'      => 'foxy_transaction_id',
         'meta_value'    => $foxy_transaction_id,
         'meta_compare'  => '=',
     );
     $orders = wc_get_orders($args);
-    $foxy_payment_session_data = WC()->session->get('foxy_payment_session');
-    WC()->session->__unset('foxy_payment_session');
 
     /**
      * Check that we have order having meta data equal to foxy_transaction_id
@@ -366,6 +390,22 @@ function get_wp_rest_response($data = null, $status = 200, $headers = array()) {
     );
 }
 
+add_filter('woocommerce_subscription_payment_meta', 'add_subscription_payment_meta', 10, 2);
+function add_subscription_payment_meta($payment_meta, $subscription) {
+    $logger = wc_get_logger();
+    $logger->warning(json_encode($payment_meta), ['source' => ' meta-logs']);
+    $logger->warning(json_encode($subscription->get_meta('payment_method_post_meta')), ['source' => ' meta-logs']);
+    $payment_meta['foxy'] = array(
+        'post_meta' => array(
+            'foxy_subscription_id' => array(
+                'value' => $subscription->get_meta('foxy_subscription_id'), 
+                'label' => 'Foxy Subscription Id',
+            )
+        )
+    );
+
+    return $payment_meta;
+}
 
 add_action('woocommerce_blocks_loaded', 'foxy_load_gateway_block_support');
 function foxy_load_gateway_block_support(): void {

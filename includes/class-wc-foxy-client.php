@@ -56,10 +56,15 @@ class Foxy_Client {
     private $base_url_test = "https://api.foxycart.test";
     // private $base_url_test = "https://api.foxycartdev.com";
     private $base_url_live = "https://api.foxycart.com";
+    private $foxy_domain_test = "foxycart.test";
+    // private $foxy_domain_test = "foxycartdev.com";
+    private $foxy_domain_live = "foxycart.com";
     private $access_token;
     private $auth_token;
     private $customers_uri;
     private $carts_uri;
+    private $store_domain;
+    private $use_remote_domain;
     public $settings;
     private static $instance;
     private $logger;
@@ -98,6 +103,8 @@ class Foxy_Client {
         $store_home_response = $this->make_foxy_request($store_uri, 'GET');
         $this->customers_uri = $store_home_response->data["_links"]["fx:customers"]["href"];
         $this->carts_uri = $store_home_response->data["_links"]["fx:carts"]["href"];
+        $this->store_domain = $store_home_response->data["store_domain"];
+        $this->use_remote_domain = $store_home_response->data["use_remote_domain"];
 
         // this transient will be used for SSO purpose
         set_transient('foxy_store_secret', $store_home_response->data["webhook_key"], DAY_IN_SECONDS);
@@ -107,6 +114,26 @@ class Foxy_Client {
 
         // Check if SSO is enabled and enable it and set URL if not
         $this->init_sso($store_home_response->data, $store_uri);
+
+        // enable the safe redirection to foxy checkout page
+        $this->init_safe_redirection();
+    }
+
+    public function init_safe_redirection() {
+        if ($this->store_domain) { 
+            add_filter( 'allowed_redirect_hosts', array( $this, 'extend_allowed_domains_list' ) );
+        }
+    }
+
+    public function extend_allowed_domains_list( $hosts ) {
+        if ($this->use_remote_domain) {
+
+        }
+        $foxy_hosts = $this->use_remote_domain ? [$this->store_domain] : [ 
+            $this->store_domain . "." . $this->foxy_domain_test,
+            $this->store_domain . "." . $this->foxy_domain_live
+        ];
+        return array_merge( $hosts, $foxy_hosts );
     }
 
     public function init_sso($store_data, $store_uri) {
@@ -348,10 +375,12 @@ class Foxy_Client {
     }
 
     public function get_parent_foxy_transaction_id_from_wc_subscription($subscription) {
-        $parent_order_id = $subscription->get_parent_id();
-        $parent_order = wc_get_order($parent_order_id);
+        $parent_order = $subscription->get_parent();
         
-        return $parent_order->get_meta('foxy_transaction_id');
+        if ($parent_order) {
+            return $parent_order->get_meta('foxy_transaction_id');
+        }
+        
     }
 
     public function get_foxy_subscription_id_from_wc_subscription($subscription) {
@@ -465,30 +494,61 @@ class Foxy_Client {
         }
     }
 
-    public function create_foxy_payment_link($order) {
-        $order_id = $order->get_id();
+    public function create_foxy_payment_link($order_id, $is_payment_change = false) {
+        if ($is_payment_change) {
+            /**
+             * Maybe we need to do it in a better way. 
+             * For code reusability we are using same method for creating payment link for payment method change as well for generating foxy checkout link
+             */
+            $subscription_id = $order_id;
+            $subscription = new WC_Subscription($subscription_id);
+        } else {
+            $order = new WC_Order($order_id);
+            $order->update_status('awaiting-payment', __('Awaiting payment', 'woocommerce'));
+        }
         $cart_items = WC()->cart->get_cart();
-        if (count($cart_items)) {
+        
+        if (count($cart_items) || $is_payment_change) {
             $cart_response = $this->make_foxy_request($this->carts_uri, "POST", []);
             $self_endpoint = $cart_response->data["_links"]["self"]["href"];
-            $attributes_endpoint = $cart_response->data["_links"]["fx:attributes"]["href"];
             $items_endpoint = $cart_response->data["_links"]["fx:items"]["href"];
             $session_endpoint = $cart_response->data["_links"]["fx:create_session"]["href"];
 
             $self_endpoint_parts = @explode("/", $self_endpoint);
             $transaction_id = end($self_endpoint_parts);
-            $this->logger->log('debug', "Transaction got created with #$transaction_id", array( 'source' => 'foxy-logs' ));
-            $order->update_meta_data( 'foxy_transaction_id', $transaction_id );
-            $order->save();
-            $this->logger->log('debug', "Added {'foxy_transaction_id' : $transaction_id} to WC order #$order_id", array( 'source' => 'foxy-logs' ));
+            $this->logger->debug("Transaction got created with #$transaction_id", array( 'source' => 'foxy-logs' ));
+
+            if ($is_payment_change) {
+                $parent_order = $subscription->get_parent();
+                // its possible that the current subscription was migrated before payment method change. In this case there won't be any parent id
+                if ($parent_order) {
+                    $parent_order->update_meta_data( 'foxy_transaction_id', $transaction_id );
+                    $parent_order->save();
+                }
+
+                $subscription->update_meta_data( 'foxy_transaction_id', $transaction_id );
+                $subscription->save();
+                $this->logger->debug("Added {'foxy_transaction_id' : $transaction_id} to parent order of WC subscription #$subscription_id", array( 'source' => 'foxy-logs' ));    
+            } else {
+                $order->update_meta_data( 'foxy_transaction_id', $transaction_id );
+                $order->save();
+                $this->logger->log('debug', "Added {'foxy_transaction_id' : $transaction_id} to WC order #$order_id", array( 'source' => 'foxy-logs' ));
+            }
 
             $item_data = [];
-            $item_data["name"] = "WC Order #$order_id";
-            $item_data["price"] = WC()->cart->total;
-            $item_data["url"] = wc_get_cart_url();
-
-            if (WC_Subscriptions_Order::order_contains_subscription($order_id)) {
+            if ($is_payment_change) {
+                $item_data["name"] = "WC Subscription #$subscription_id";
+                $item_data["price"] = $subscription->get_total('edit');
                 $item_data["subscription_frequency"] = '10y';
+                $next_payment_date = $subscription->calculate_date('next_payment');
+                $item_data["subscription_start_date"] = date("Y-m-d", strtotime($next_payment_date));
+            } else {
+                $item_data["name"] = "WC Order #$order_id";
+                $item_data["price"] = WC()->cart->total;
+                $item_data["url"] = wc_get_cart_url();
+                if (WC_Subscriptions_Order::order_contains_subscription($order_id)) {
+                    $item_data["subscription_frequency"] = '10y';
+                }
             }
 
             $this->make_foxy_request($items_endpoint, "POST", $item_data);
@@ -502,10 +562,10 @@ class Foxy_Client {
              */
             if (!$foxy_customer_id || !is_user_logged_in()) {
                 $foxy_customer_id = $this->create_customer([
-                    "id" => get_current_user_id(),
-                    "email" => $order->get_billing_email(),
-                    "first_name" => $order->get_billing_first_name(),
-                    "last_name" => $order->get_billing_last_name()
+                    "id" => $is_payment_change ? $subscription->get_customer_id() : get_current_user_id(),
+                    "email" => $is_payment_change ? $subscription->get_billing_email() : $order->get_billing_email(),
+                    "first_name" => $is_payment_change ? $subscription->get_billing_first_name() : $order->get_billing_first_name(),
+                    "last_name" => $is_payment_change ? $subscription->get_billing_last_name() : $order->get_billing_last_name()
                 ]);
             }
 
@@ -516,12 +576,19 @@ class Foxy_Client {
             $payment_link = $session_response->data["cart_link"];
             $payment_link = str_replace('/cart?', '/checkout?', $payment_link);
 
-            WC()->session->set('foxy_payment_session', [
+            $session_data = [
                 'foxy_transaction_id' => $transaction_id,
                 'payment_link' => $payment_link,
                 'customer_id' => $foxy_customer_id,
                 'attempt' => 1
-            ]);
+            ];
+
+            if ($is_payment_change) {
+                $session_data['change_payment_method'] = true;
+                $session_data['wc_subscription_id'] = $subscription_id;
+            }
+
+            WC()->session->set('foxy_payment_session', $session_data);
 
             return $payment_link . '&' . http_build_query([
                 'fc_auth_token' => $auth_token,
