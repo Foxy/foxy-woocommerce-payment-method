@@ -122,9 +122,6 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
             <h4>Please add following configuration in your Foxy Admin:</h4>
             <ol>
                 <li>
-                    Add <code><?php echo site_url('index.php') . '?rest_route=/foxy/v1/sso'; ?></code> as SSO URL under advanced settings
-                </li>
-                <li>
                     Add <code><?php echo site_url('index.php') . '/foxy/v1/callback&fc_order_id=`${FC.json.order_id}`'; ?></code> as redirect URL in web receipt settings
                 </li>
             </ol>

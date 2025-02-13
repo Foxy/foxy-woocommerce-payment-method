@@ -110,7 +110,7 @@ class Foxy_Client {
         set_transient('foxy_store_secret', $store_home_response->data["webhook_key"], DAY_IN_SECONDS);
 
         // Initialize the transaction webhook 
-        $this->init_transaction_webhook($store_home_response->data["_links"]["fx:webhooks"]["href"]);
+        // $this->init_transaction_webhook($store_home_response->data["_links"]["fx:webhooks"]["href"]);
 
         // Check if SSO is enabled and enable it and set URL if not
         $this->init_sso($store_home_response->data, $store_uri);
@@ -350,7 +350,19 @@ class Foxy_Client {
 
     public function get_foxy_subscription_from_transaction_id($foxy_transaction_id) {
         $response = $this->make_foxy_request($this->get_foxy_base_url() . "/transactions/$foxy_transaction_id?zoom=subscriptions", 'GET');
-        $foxy_subscription_link = $response->data["_links"]["fx:subscription"]["href"];
+
+        if ($response->data["type"] == 'transaction') {
+            if (!array_key_exists("_embedded", $response->data) || !count($response->data["_embedded"]["fx:subscriptions"])) {
+                return null;
+            }
+            $foxy_subscription_link = $response->data["_embedded"]["fx:subscriptions"][0]["_links"]["self"]["href"];
+        } else {
+            if (!array_key_exists("fx:subscription", $response->data["_links"])) {
+                return null;
+            }
+            $foxy_subscription_link = $response->data["_links"]["fx:subscription"]["href"];
+        }
+        
         $subscription_endpoint_parts = @explode("/", $foxy_subscription_link);
         $foxy_subscription_id = end($subscription_endpoint_parts);
         return $foxy_subscription_id ? $foxy_subscription_id : null;
@@ -374,22 +386,14 @@ class Foxy_Client {
         }
     }
 
-    public function get_parent_foxy_transaction_id_from_wc_subscription($subscription) {
-        $parent_order = $subscription->get_parent();
-        
-        if ($parent_order) {
-            return $parent_order->get_meta('foxy_transaction_id');
-        }
-        
-    }
-
     public function get_foxy_subscription_id_from_wc_subscription($subscription) {
         $foxy_subscription_id = $subscription->get_meta('foxy_subscription_id');
         $subscription_id = $subscription->get_id();
+        $parent_order = $subscription->get_parent();
         $parent_order_id = $subscription->get_parent_id();
 
         if (!$foxy_subscription_id) {
-            $original_foxy_transaction_id = $this->get_parent_foxy_transaction_id_from_wc_subscription($subscription);
+            $original_foxy_transaction_id = $parent_order->get_meta('foxy_transaction_id');
             if (!$original_foxy_transaction_id) {
                 throw new Foxy_Not_Found_Exception("Foxy transaction for WC subscription #$subscription_id (WC Order #$parent_order_id) not found in foxy!");
                 return null;
@@ -407,6 +411,12 @@ class Foxy_Client {
 
         $this->logger->log('debug', "Foxy subscription #$foxy_subscription_id fetched for WC subscription #$subscription_id", array( 'source' => 'foxy-logs' ));
         $subscription->update_meta_data( 'foxy_subscription_id', $foxy_subscription_id );
+        $subscription->save();
+
+        if (!$parent_order->get_meta('foxy_subscription_id')) {
+            $parent_order->update_meta_data( 'foxy_subscription_id', $foxy_subscription_id );
+            $parent_order->save();
+        }
 
         return $foxy_subscription_id;
     }
@@ -419,7 +429,8 @@ class Foxy_Client {
             $foxy_subscription_id = $this->get_foxy_subscription_id_from_wc_subscription($subscription);
 
             // We will add foxy subscription ID as meta data to WC transaction and subscription just in case we need it somewhere later
-            $this->update_meta($renewal_order, $subscription, 'foxy_subscription_id', $foxy_subscription_id);
+            $renewal_order->update_meta_data( 'foxy_subscription_id', $foxy_subscription_id );
+            $renewal_order->save();
 
             $foxy_subscription_link = $this->get_foxy_base_url() . "/subscriptions/$foxy_subscription_id";
             $response = $this->make_foxy_request($foxy_subscription_link, 'PATCH', ['past_due_amount' => $amount]);
@@ -482,20 +493,8 @@ class Foxy_Client {
         }
     }
 
-    public function update_meta($order, $subscription, $tag, $tag_value) {
-        if (!$order->get_meta($tag)) {
-            $order->update_meta_data( $tag, $tag_value );
-            $order->save();
-        }
-
-        if (!$subscription->get_meta($tag)) {
-            $subscription->update_meta_data( $tag, $tag_value );
-            $subscription->save();
-        }
-    }
-
-    public function create_foxy_payment_link($order_id, $is_payment_change = false) {
-        if ($is_payment_change) {
+    public function create_foxy_payment_link($order_id, $is_payment_method_change = false) {
+        if ($is_payment_method_change) {
             /**
              * Maybe we need to do it in a better way. 
              * For code reusability we are using same method for creating payment link for payment method change as well for generating foxy checkout link
@@ -508,7 +507,7 @@ class Foxy_Client {
         }
         $cart_items = WC()->cart->get_cart();
         
-        if (count($cart_items) || $is_payment_change) {
+        if (count($cart_items) || $is_payment_method_change) {
             $cart_response = $this->make_foxy_request($this->carts_uri, "POST", []);
             $self_endpoint = $cart_response->data["_links"]["self"]["href"];
             $items_endpoint = $cart_response->data["_links"]["fx:items"]["href"];
@@ -518,7 +517,7 @@ class Foxy_Client {
             $transaction_id = end($self_endpoint_parts);
             $this->logger->debug("Transaction got created with #$transaction_id", array( 'source' => 'foxy-logs' ));
 
-            if ($is_payment_change) {
+            if ($is_payment_method_change) {
                 $parent_order = $subscription->get_parent();
                 // its possible that the current subscription was migrated before payment method change. In this case there won't be any parent id
                 if ($parent_order) {
@@ -536,7 +535,7 @@ class Foxy_Client {
             }
 
             $item_data = [];
-            if ($is_payment_change) {
+            if ($is_payment_method_change) {
                 $item_data["name"] = "WC Subscription #$subscription_id";
                 $item_data["price"] = $subscription->get_total('edit');
                 $item_data["subscription_frequency"] = '10y';
@@ -562,10 +561,10 @@ class Foxy_Client {
              */
             if (!$foxy_customer_id || !is_user_logged_in()) {
                 $foxy_customer_id = $this->create_customer([
-                    "id" => $is_payment_change ? $subscription->get_customer_id() : get_current_user_id(),
-                    "email" => $is_payment_change ? $subscription->get_billing_email() : $order->get_billing_email(),
-                    "first_name" => $is_payment_change ? $subscription->get_billing_first_name() : $order->get_billing_first_name(),
-                    "last_name" => $is_payment_change ? $subscription->get_billing_last_name() : $order->get_billing_last_name()
+                    "id" => $is_payment_method_change ? $subscription->get_customer_id() : get_current_user_id(),
+                    "email" => $is_payment_method_change ? $subscription->get_billing_email() : $order->get_billing_email(),
+                    "first_name" => $is_payment_method_change ? $subscription->get_billing_first_name() : $order->get_billing_first_name(),
+                    "last_name" => $is_payment_method_change ? $subscription->get_billing_last_name() : $order->get_billing_last_name()
                 ]);
             }
 
@@ -583,7 +582,7 @@ class Foxy_Client {
                 'attempt' => 1
             ];
 
-            if ($is_payment_change) {
+            if ($is_payment_method_change) {
                 $session_data['change_payment_method'] = true;
                 $session_data['wc_subscription_id'] = $subscription_id;
             }

@@ -166,7 +166,8 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
                 $logger->debug("WC order not found for Foxy Transaction #$foxy_transaction_id", ['source' => ' foxy-logs']);
                 return get_wp_rest_response("WC order not found for Foxy Transaction #$foxy_transaction_id", 400);
             }
-            
+            $logger->debug("found Foxy sub #$foxy_subscription_id for Foxy Transaction #$foxy_transaction_id", ['source' => ' foxy-logs']);
+
             $args = array(
                 'meta_key'      => 'foxy_subscription_id',
                 'meta_value'    => $foxy_subscription_id,
@@ -189,6 +190,8 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
     }
 
     $order = $orders[0];
+    $order->update_meta_data('foxy_transaction_id', $foxy_transaction_id);
+    $order->save();
     
     if (update_order_status($order, $parsed_data['status'], $foxy_transaction_id)) {
         return get_wp_rest_response("OK");
@@ -343,6 +346,7 @@ function foxy_handle_callback(WP_REST_Request $request): WP_REST_Response {
     }
 
     $order = $orders[0];
+    $wc_order_id = $order->get_id();
     $foxy_client = Foxy_Client::get_instance();
 
     try {
@@ -358,10 +362,24 @@ function foxy_handle_callback(WP_REST_Request $request): WP_REST_Response {
         wc_add_notice('Failed to check status of your payment. Please contact the store.', 'error');
         return foxy_generate_webhook_response($order->get_view_order_url());
     }
-    $wc_order_id = $order->get_id();
+
     $logger->debug("Payment status is `$payment_status` for transaction #$foxy_transaction_id (WC Order #$wc_order_id)", ['source' => ' foxy-logs']);
 
     update_order_status($order, $payment_status, $foxy_transaction_id);
+
+    // if this order belongs to a foxy sub then we will update the meta data of WC order as well as WC subscription 
+    $foxy_subscription_id = $foxy_client->get_foxy_subscription_from_transaction_id($foxy_transaction_id);
+    if ($foxy_subscription_id) {
+        $logger->debug("Foxy sub #$foxy_subscription_id found for Foxy transaction #$foxy_transaction_id (WC Order #$wc_order_id)", ['source' => ' foxy-logs']);
+        $order->update_meta_data( 'foxy_subscription_id', $foxy_subscription_id );
+        $order->save();
+
+        $subscription = $foxy_client->get_subscription_from_order($order);
+        if ($subscription) {
+            $subscription->update_meta_data( 'foxy_subscription_id', $foxy_subscription_id );
+            $subscription->save();
+        }
+    }
 
     if (!in_array($payment_status, ['captured', 'approved', 'authorized'])) {
         $logger->warning("Unpaid status ({$payment_status}) for transaction ID {$foxy_transaction_id}", ['source' => ' foxy-logs']);
@@ -392,9 +410,6 @@ function get_wp_rest_response($data = null, $status = 200, $headers = array()) {
 
 add_filter('woocommerce_subscription_payment_meta', 'add_subscription_payment_meta', 10, 2);
 function add_subscription_payment_meta($payment_meta, $subscription) {
-    $logger = wc_get_logger();
-    $logger->warning(json_encode($payment_meta), ['source' => ' meta-logs']);
-    $logger->warning(json_encode($subscription->get_meta('payment_method_post_meta')), ['source' => ' meta-logs']);
     $payment_meta['foxy'] = array(
         'post_meta' => array(
             'foxy_subscription_id' => array(
