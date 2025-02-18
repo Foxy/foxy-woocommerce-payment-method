@@ -110,13 +110,24 @@ class Foxy_Client {
         set_transient('foxy_store_secret', $store_home_response->data["webhook_key"], DAY_IN_SECONDS);
 
         // Initialize the transaction webhook 
-        // $this->init_transaction_webhook($store_home_response->data["_links"]["fx:webhooks"]["href"]);
+        $this->init_transaction_webhook($store_home_response->data["_links"]["fx:webhooks"]["href"]);
 
         // Check if SSO is enabled and enable it and set URL if not
         $this->init_sso($store_home_response->data, $store_uri);
 
         // enable the safe redirection to foxy checkout page
         $this->init_safe_redirection();
+    }
+
+    public function get_sso_endpoint() {
+        if ($this->use_remote_domain) {
+            return $this->store_domain;
+        }
+
+        $options = $this->get_foxy_settings();
+        $domain = strtolower($options['is_test']) == 'yes' ? $this->foxy_domain_test : $this->foxy_domain_live;
+
+        return $this->store_domain . "." . $domain;
     }
 
     public function init_safe_redirection() {
@@ -126,9 +137,6 @@ class Foxy_Client {
     }
 
     public function extend_allowed_domains_list( $hosts ) {
-        if ($this->use_remote_domain) {
-
-        }
         $foxy_hosts = $this->use_remote_domain ? [$this->store_domain] : [ 
             $this->store_domain . "." . $this->foxy_domain_test,
             $this->store_domain . "." . $this->foxy_domain_live
@@ -493,6 +501,17 @@ class Foxy_Client {
         }
     }
 
+    public function get_foxy_sub_token_url($foxy_subscription_id) {
+        $sub_response = $this->make_foxy_request($this->get_foxy_base_url() . "/subscriptions/$foxy_subscription_id", 'GET');
+        
+        if ($sub_response->status_code == 200 && $sub_response->data["is_active"] && array_key_exists("fx:sub_token_url", $sub_response->data["_links"])) {
+            $sub_token_url = $sub_response->data["_links"]["fx:sub_token_url"]["href"];
+            return str_replace('/cart?', '/checkout?', $sub_token_url);
+        }
+
+        return false;
+    }
+
     public function create_foxy_payment_link($order_id, $is_payment_method_change = false) {
         if ($is_payment_method_change) {
             /**
@@ -501,6 +520,32 @@ class Foxy_Client {
              */
             $subscription_id = $order_id;
             $subscription = new WC_Subscription($subscription_id);
+            
+            if ($subscription->get_meta('foxy_subscription_id')) {
+                $sub_token_url = $this->get_foxy_sub_token_url($subscription->get_meta('foxy_subscription_id'));
+                if ($sub_token_url) {
+                    $timestamp = time() + 600;
+                    $foxycart_secret_key = get_transient('foxy_store_secret');
+
+                    $foxy_customer_id = $this->get_current_foxy_customer_id();
+                    $auth_token = sha1($foxy_customer_id . '|' . $timestamp . '|' . $foxycart_secret_key);
+
+                    WC()->session->set('foxy_payment_session', [
+                        'payment_link' => $sub_token_url,
+                        'change_payment_method' => true,
+                        'wc_subscription_id' => $subscription_id
+                    ]);
+
+                    return $sub_token_url . '&' . http_build_query([
+                        'fc_auth_token' => $auth_token,
+                        'fc_customer_id' => $foxy_customer_id,
+                        'timestamp' => $timestamp,
+                        'cart' => 'checkout'
+                    ]);
+
+                    return $sub_token_url;
+                }
+            }
         } else {
             $order = new WC_Order($order_id);
             $order->update_status('awaiting-payment', __('Awaiting payment', 'woocommerce'));
@@ -532,21 +577,33 @@ class Foxy_Client {
                 $order->update_meta_data( 'foxy_transaction_id', $transaction_id );
                 $order->save();
                 $this->logger->log('debug', "Added {'foxy_transaction_id' : $transaction_id} to WC order #$order_id", array( 'source' => 'foxy-logs' ));
+
+                /**
+                 * If a cart is abandanoed and later user comes back and retries to complete the payment then WC by default does below:
+                 * 1. creates a new subscription (Or maybe updates/increments the ID of the sub. Not sure)
+                 * 2. copies the meta data of old order to this new subscription
+                 * Because of this whenever we abandon the cart and retry the payment, the subscription will update but it will store the older foxy_transaction_id in its meta.
+                 * To prevent the confusion in future we will remove this transaction id. As we don't need transaction_id stored on sub
+                 */
+                $sub = $this->get_subscription_from_order($order);
+                if ($sub && $sub->get_meta_data('foxy_transaction_id')) {
+                    $sub->delete_meta_data('foxy_transaction_id');
+                    $sub->save();
+                }
             }
 
             $item_data = [];
             if ($is_payment_method_change) {
                 $item_data["name"] = "WC Subscription #$subscription_id";
                 $item_data["price"] = $subscription->get_total('edit');
-                $item_data["subscription_frequency"] = '10y';
-                $next_payment_date = $subscription->calculate_date('next_payment');
-                $item_data["subscription_start_date"] = date("Y-m-d", strtotime($next_payment_date));
+                $item_data["subscription_frequency"] = '30y';
+                $item_data["subscription_start_date"] = date("Y-m-d", strtotime('+30 years', time()));
             } else {
                 $item_data["name"] = "WC Order #$order_id";
                 $item_data["price"] = WC()->cart->total;
                 $item_data["url"] = wc_get_cart_url();
                 if (WC_Subscriptions_Order::order_contains_subscription($order_id)) {
-                    $item_data["subscription_frequency"] = '10y';
+                    $item_data["subscription_frequency"] = '30y';
                 }
             }
 

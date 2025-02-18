@@ -152,15 +152,15 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
     // need to check this later. Might be that wc_get_orders() return boolean false if no orders found which will throw exception. If it returns empty array then this is okay
     $orders = wc_get_orders($args);
     
+    /**
+     * If we don't have foxy_transaction_id in order meta then it's possible that this transaction was created for past due settlement in Foxy
+     * We will try to get Foxy subscription for this and check if we have corresponding subscription in WC
+     */
+    $foxy_client = Foxy_Client::get_instance();
+    $foxy_subscription_id = $foxy_client->get_foxy_subscription_from_transaction_id($foxy_transaction_id);
+
     if (!count($orders)) {
         try {
-            /**
-             * If we don't have foxy_transaction_id in order meta then it's possible that this transaction was created for past due settlement in Foxy
-             * We will try to get Foxy subscription for this and check if we have corresponding subscription in WC
-             */
-            $foxy_client = Foxy_Client::get_instance();
-            $foxy_subscription_id = $foxy_client->get_foxy_subscription_from_transaction_id($foxy_transaction_id);
-
             if (!$foxy_subscription_id) {
                 \WC_Admin_Notices::add_custom_notice( "foxy-webhook-transaction-not-found", "Received a transaction webhook from Foxy for transaction #$foxy_transaction_id but no corresponding order was found in WC" );
                 $logger->debug("WC order not found for Foxy Transaction #$foxy_transaction_id", ['source' => ' foxy-logs']);
@@ -191,6 +191,20 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
 
     $order = $orders[0];
     $order->update_meta_data('foxy_transaction_id', $foxy_transaction_id);
+
+    if ($foxy_subscription_id) {
+        $order->update_meta_data('foxy_subscription_id', $foxy_subscription_id);
+        $subscription = $foxy_client->get_subscription_from_order($order);
+        
+        $order_id = $order->get_id();
+        if ($subscription) {
+            $sub_id = $subscription->get_id();
+            $logger->debug("found subscription #$sub_id for wc #$order_id", ['source' => ' foxy-logs']);
+            $subscription->update_meta_data('foxy_subscription_id', $foxy_subscription_id);
+            $subscription->save();
+        }
+    }
+
     $order->save();
     
     if (update_order_status($order, $parsed_data['status'], $foxy_transaction_id)) {
@@ -241,20 +255,37 @@ function update_order_status($order, $foxy_transaction_status, $foxy_transaction
  * for handling foxy SSO
  */
 function foxy_handle_sso(WP_REST_Request $request) {
+    $queries = array();
+    parse_str($_SERVER['QUERY_STRING'], $queries);
+    
     $foxy_payment_session_data = WC()->session->get('foxy_payment_session');
-    $foxy_customer_id = $foxy_payment_session_data['customer_id'];
+
+    if (!$foxy_payment_session_data) {
+        $foxy_client = Foxy_Client::get_instance();
+        $endpoint = $foxy_client->get_sso_endpoint() . "/checkout?" ;
+        $foxy_customer_id = 0;
+    } else {
+        $endpoint = $foxy_payment_session_data['payment_link'];
+        $foxy_customer_id = $foxy_payment_session_data['customer_id'];
+    }
     
     $timestamp = time() + 600;
     $foxycart_secret_key = get_transient('foxy_store_secret');
     $auth_token = sha1($foxy_customer_id . '|' . $timestamp . '|' . $foxycart_secret_key);
-
-    $foxy_payment_link = $foxy_payment_session_data['payment_link'] . '&' . http_build_query([
+    $query_params = [
         'fc_auth_token' => $auth_token,
-        'fc_customer_id' => $foxy_customer_id,
+        'fc_customer_id' => $foxy_customer_id ?? 0,
         'timestamp' => $timestamp,
-    ]);
+        'cart' => 'checkout'
+    ];
 
+    if (isset($queries['fcsid'])) {
+        $query_params['fcsid'] = $queries['fcsid'];
+    }
+
+    $foxy_payment_link = 'https://' . $endpoint  . http_build_query($query_params);
     wp_redirect($foxy_payment_link);
+    exit();
 }
 
 /**
@@ -278,31 +309,18 @@ function foxy_handle_sso(WP_REST_Request $request) {
 //    return $order_statuses;
 // }
 
-/**
- * For testing only.
- * This will add minutes for subscription renewal periods
- */
-// function eg_extend_subscription_period_intervals( $intervals ) {
-//     $logger = wc_get_logger();
-//     $logger->error(json_encode($intervals), ['source' => ' options']);
-//     $intervals['minute'] = 'minutes';
-//     return $intervals;
-// }
-// add_filter( 'woocommerce_subscription_available_time_periods', 'eg_extend_subscription_period_intervals' );
-
-
  function foxy_handle_payment_method_change($foxy_payment_session_data, $request) {
     $logger = wc_get_logger();
     $foxy_transaction_id = $request->get_param('fc_order_id');
     $wc_subscription_id = $foxy_payment_session_data['wc_subscription_id'];
 
     $subscription = new WC_Subscription($wc_subscription_id);
-    
-    if ($foxy_payment_session_data['foxy_transaction_id'] != $foxy_transaction_id || $subscription->get_meta('foxy_transaction_id') != $foxy_transaction_id) {
+    $foxy_subscription_id = $foxy_payment_session_data['foxy_subscription_id'];
+    if ($subscription->get_payment_method() == 'foxy') {
+        $logger->debug("Payment method of sub #$wc_subscription_id (Foxy #$foxy_subscription_id) changed to 'Foxy'", ['source' => ' foxy-logs']);
+    } else {
         $logger->error("Order not found for Foxy Transaction ID: {$foxy_transaction_id}", ['source' => ' foxy-logs']);
         wc_add_notice('Order not found', 'error');
-
-        return foxy_generate_webhook_response(home_url() . "/my-account/subscriptions/");
     }
 
     return foxy_generate_webhook_response(home_url() . "/my-account/subscriptions/");
@@ -319,6 +337,13 @@ function foxy_handle_callback(WP_REST_Request $request): WP_REST_Response {
 
     $foxy_payment_session_data = WC()->session->get('foxy_payment_session');
     WC()->session->__unset('foxy_payment_session');
+
+    if (!$foxy_payment_session_data) {
+        $logger->error("Order not found for Foxy Transaction ID: {$foxy_transaction_id}", ['source' => ' foxy-logs']);
+        wc_add_notice('Order not found', 'error');
+
+        return foxy_generate_webhook_response(home_url());
+    }
 
     // user is returning to wc page to change the payment method to foxy
     if (array_key_exists('change_payment_method', $foxy_payment_session_data) && $foxy_payment_session_data['change_payment_method']) {

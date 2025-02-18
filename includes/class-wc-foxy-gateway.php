@@ -32,7 +32,7 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
             'subscription_date_changes',
             'subscription_payment_method_change',
             'subscription_payment_method_change_customer',
-            'subscription_payment_method_change_admin',
+            // 'subscription_payment_method_change_admin',
             'multiple_subscriptions',
         ];
         $this->method_title = 'Foxy';
@@ -222,8 +222,7 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
         try {
             $foxy_client = Foxy_Client::get_instance();
             if (wcs_is_subscription($order_id)) {
-                $subscription_id = $order_id;
-                $url = $foxy_client->create_foxy_payment_link($subscription_id, true);
+                $url = $foxy_client->create_foxy_payment_link($order_id, true);
             } else {
                 $url = $foxy_client->create_foxy_payment_link($order_id);
             }
