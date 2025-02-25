@@ -259,7 +259,7 @@ function update_order_status($order, $foxy_transaction_status, $foxy_transaction
 function foxy_handle_sso(WP_REST_Request $request) {
     $queries = array();
     parse_str($_SERVER['QUERY_STRING'], $queries);
-echo 'in';die;
+
     $foxy_payment_session_data = WC()->session->get('foxy_payment_session');
 
     if (!$foxy_payment_session_data) {
