@@ -122,7 +122,7 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
             <h4>Please add following configuration in your Foxy Admin:</h4>
             <ol>
                 <li>
-                    Add <code><?php echo site_url('index.php') . '/foxy/v1/callback&fc_order_id=`${FC.json.order_id}`'; ?></code> as redirect URL in web receipt settings
+                    Add <code><?php echo site_url('index.php') . '?rest_route=/foxy/v1/callback&fc_order_id=`${FC.json.order_id}`'; ?></code> as redirect URL in web receipt settings
                 </li>
             </ol>
         <?php
@@ -160,19 +160,19 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
                     'required' => 'true',
                 ],
             ],
-            'access_token' => [
-                'title' => __('Access Token', 'foxy'),
+            'refresh_token' => [
+                'title' => __('Refresh Token', 'foxy'),
                 'type' => 'password',
-                'description' => __('Foxy Access Token', 'foxy'),
+                'description' => __('Foxy Refresh Token', 'foxy'),
                 'desc_tip' => true,
                 'custom_attributes' => [
                     'required' => 'true',
                 ],
             ],
-            'refresh_token' => [
-                'title' => __('Refresh Token', 'foxy'),
+            'access_token' => [
+                'title' => __('Access Token', 'foxy'),
                 'type' => 'password',
-                'description' => __('Foxy Refresh Token', 'foxy'),
+                'description' => __('Foxy Access Token', 'foxy'),
                 'desc_tip' => true,
                 'custom_attributes' => [
                     'required' => 'true',

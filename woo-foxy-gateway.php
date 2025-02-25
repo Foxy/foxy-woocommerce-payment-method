@@ -138,7 +138,7 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
     $foxy_transaction_id = $parsed_data["id"];
     $logger->debug("Got Foxy transaction webhook `$event` for #$foxy_transaction_id", ['source' => ' foxy-logs']);
 
-    if (!in_array($event, ['transaction/created', 'transaction/modified', 'transaction/captured', 'transaction/refunded', 'transaction/voided', 'transaction/refeed'])) {
+    if (!in_array($event, ['transaction/created', 'transaction/modified', 'transaction/captured', 'transaction/refunded', 'transaction/voided', 'transaction/refeed', 'transaction/verified'])) {
         $logger->error("Received unsupported webhook `$event` for transaction #$foxy_transaction_id", ['source' => ' foxy-logs']);
         return get_wp_rest_response("webhook not supported", 400);
     }
@@ -216,9 +216,11 @@ function update_order_status($order, $foxy_transaction_status, $foxy_transaction
     $logger = wc_get_logger();
     $order_status = "";
     switch (strtolower($foxy_transaction_status)) {
+        case "":
         case "captured":
         case "approved":
         case "authorized":
+        case "verified":
             $order_status = "completed";
             break;
         case "rejected":
@@ -257,7 +259,7 @@ function update_order_status($order, $foxy_transaction_status, $foxy_transaction
 function foxy_handle_sso(WP_REST_Request $request) {
     $queries = array();
     parse_str($_SERVER['QUERY_STRING'], $queries);
-    
+echo 'in';die;
     $foxy_payment_session_data = WC()->session->get('foxy_payment_session');
 
     if (!$foxy_payment_session_data) {
@@ -267,6 +269,7 @@ function foxy_handle_sso(WP_REST_Request $request) {
     } else {
         $endpoint = $foxy_payment_session_data['payment_link'];
         $foxy_customer_id = $foxy_payment_session_data['customer_id'];
+        WC()->session->__unset('foxy_payment_session');
     }
     
     $timestamp = time() + 600;
@@ -283,7 +286,7 @@ function foxy_handle_sso(WP_REST_Request $request) {
         $query_params['fcsid'] = $queries['fcsid'];
     }
 
-    $foxy_payment_link = 'https://' . $endpoint  . http_build_query($query_params);
+    $foxy_payment_link = $endpoint  . http_build_query($query_params);
     wp_redirect($foxy_payment_link);
     exit();
 }
@@ -376,13 +379,8 @@ function foxy_handle_callback(WP_REST_Request $request): WP_REST_Response {
 
     try {
         $payment_status = $foxy_client->get_payment_status($foxy_transaction_id);
-
-        if (!$payment_status) {
-            $logger->error('error while checking the status of transaction', ['source' => ' foxy-logs']);
-            wc_add_notice('Something went wrong. Please contact the store.', 'error');
-            return foxy_generate_webhook_response($order->get_view_order_url());
-        }
     } catch (Exception $exception) {
+        $logger->error("error while checking the status of transaction #$foxy_transaction_id", ['source' => ' foxy-logs']);
         $logger->error($exception, ['source' => ' foxy']);
         wc_add_notice('Failed to check status of your payment. Please contact the store.', 'error');
         return foxy_generate_webhook_response($order->get_view_order_url());
@@ -406,7 +404,7 @@ function foxy_handle_callback(WP_REST_Request $request): WP_REST_Response {
         }
     }
 
-    if (!in_array($payment_status, ['captured', 'approved', 'authorized'])) {
+    if (!in_array($payment_status, ['', 'captured', 'approved', 'authorized', 'verified'])) {
         $logger->warning("Unpaid status ({$payment_status}) for transaction ID {$foxy_transaction_id}", ['source' => ' foxy-logs']);
         wc_add_notice('Payment not completed', 'error');
         return foxy_generate_webhook_response($order->get_view_order_url());

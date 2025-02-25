@@ -126,8 +126,12 @@ class Foxy_Client {
 
         $options = $this->get_foxy_settings();
         $domain = strtolower($options['is_test']) == 'yes' ? $this->foxy_domain_test : $this->foxy_domain_live;
+        $endpoint = $this->store_domain . "." . $domain;
+        if (substr($endpoint, 0, 7) == "http://" || substr($endpoint, 0, 8) == "https://") {
+            return $endpoint;
+        }
 
-        return $this->store_domain . "." . $domain;
+        return 'https://' . $endpoint;
     }
 
     public function init_safe_redirection() {
@@ -157,7 +161,7 @@ class Foxy_Client {
     public function init_transaction_webhook($webhook_uri) {
         $webhook_response = $this->make_foxy_request($webhook_uri, 'GET');
         $all_webhooks = $webhook_response->data["_embedded"]["fx:webhooks"];
-        $webhook_url = site_url('index.php') . '?rest_route=/foxy/v1/webhook/transaction';
+        $webhook_url = "https://webhook.site/39c86945-f7b4-43f1-aedb-bd22a446e9f4";//site_url('index.php') . '?rest_route=/foxy/v1/webhook/transaction';
         $webhook_name = "WC_Store_Transaction_Webhook";
         $webhook_format = "json";
         $webhook_resource = "transaction";
@@ -224,8 +228,14 @@ class Foxy_Client {
                 "last_name" => $customer_data["last_name"]
             ];
 
-            $response = $this->make_foxy_request($this->get_foxy_base_url() . "/customers/$foxy_customer_id", 'PATCH', $data);
-            $this->logger->debug("Foxy Customer #$foxy_customer_id (WC #$wc_customer_id) updated", array( 'source' => 'foxy-logs' ));
+            try {
+                $response = $this->make_foxy_request($this->get_foxy_base_url() . "/customers/$foxy_customer_id", 'PATCH', $data);
+                $this->logger->debug("Foxy Customer #$foxy_customer_id (WC #$wc_customer_id) updated", array( 'source' => 'foxy-logs' ));
+            } catch (Exception $e ) {
+                $this->logger->debug("Got some error while updating Foxy customer #$foxy_customer_id (WC #$wc_customer_id)", array( 'source' => 'foxy-logs' ));
+                $this->logger->debug("Will try to create new customer in Foxy now", array( 'source' => 'foxy-logs' ));
+                $foxy_customer_id = $this->create_customer($customer_data);
+            }
         } else {
             $foxy_customer_id = $this->create_customer($customer_data);
         }
@@ -320,7 +330,7 @@ class Foxy_Client {
             if ($customer_response->data["total_items"]) {
                 $foxy_customer_id = $customer_response->data["_embedded"]["fx:customers"][0]["id"];
                 if ($customer_data["id"]) {
-                    $this->add_foxy_customer_id_to_wc_customer($customer_data["id"], $foxy_customer_id);
+                    update_user_meta( $customer_data["id"], "foxy-customer-id", $foxy_customer_id);
                 }
                 $this->logger->log('debug', "Foxy Customer #$foxy_customer_id found", array( 'source' => 'foxy-logs' ));
                 return $foxy_customer_id;
@@ -335,7 +345,7 @@ class Foxy_Client {
 
                 // we won't have customer id if user is shopping as guest
                 if ($customer_data["id"]) {
-                    $this->add_foxy_customer_id_to_wc_customer($customer_data["id"], $foxy_customer_id);
+                    update_user_meta( $customer_data["id"], "foxy-customer-id", $foxy_customer_id);
                 }
                 $this->logger->log('debug', "Foxy Customer #$foxy_customer_id created", array( 'source' => 'foxy-logs' ));
 
@@ -346,14 +356,6 @@ class Foxy_Client {
         }
         
         return;
-    }
-
-    public function add_foxy_customer_id_to_wc_customer($wc_customer_id, $foxy_customer_id) {
-        update_user_meta(
-            $wc_customer_id,
-            "foxy-customer-id",
-            $foxy_customer_id
-        );
     }
 
     public function get_foxy_subscription_from_transaction_id($foxy_transaction_id) {
@@ -401,7 +403,10 @@ class Foxy_Client {
         $parent_order_id = $subscription->get_parent_id();
 
         if (!$foxy_subscription_id) {
-            $original_foxy_transaction_id = $parent_order->get_meta('foxy_transaction_id');
+            if ($parent_order) {
+                $original_foxy_transaction_id = $parent_order->get_meta('foxy_transaction_id');
+            }
+            
             if (!$original_foxy_transaction_id) {
                 throw new Foxy_Not_Found_Exception("Foxy transaction for WC subscription #$subscription_id (WC Order #$parent_order_id) not found in foxy!");
                 return null;
@@ -421,7 +426,7 @@ class Foxy_Client {
         $subscription->update_meta_data( 'foxy_subscription_id', $foxy_subscription_id );
         $subscription->save();
 
-        if (!$parent_order->get_meta('foxy_subscription_id')) {
+        if ($parent_order && !$parent_order->get_meta('foxy_subscription_id')) {
             $parent_order->update_meta_data( 'foxy_subscription_id', $foxy_subscription_id );
             $parent_order->save();
         }
@@ -536,7 +541,7 @@ class Foxy_Client {
                         'wc_subscription_id' => $subscription_id
                     ]);
 
-                    return $sub_token_url . '&' . http_build_query([
+                    $sub_token_url = $sub_token_url . '&' . http_build_query([
                         'fc_auth_token' => $auth_token,
                         'fc_customer_id' => $foxy_customer_id,
                         'timestamp' => $timestamp,
@@ -646,11 +651,16 @@ class Foxy_Client {
 
             WC()->session->set('foxy_payment_session', $session_data);
 
-            return $payment_link . '&' . http_build_query([
+            $payment_link = $payment_link . '&' . http_build_query([
                 'fc_auth_token' => $auth_token,
                 'fc_customer_id' => $foxy_customer_id,
                 'timestamp' => $timestamp,
+                'cart' => 'checkout'
             ]);
+
+            $this->logger->debug("Payment Link: $payment_link", array( 'source' => 'foxy-logs' ));
+
+            return $payment_link;
         } else {
             throw new Exception("Cart is empty");
         }
@@ -719,6 +729,7 @@ class Foxy_Client {
             $body = $data;
         } else {
             if ($this->should_refresh_token()) {
+                $this->logger->log('debug', "Need to refresh token", array( 'source' => 'foxy-logs' ));
                 $this->refresh_token();
             }
             $headers['Authorization'] = 'Bearer ' . $this->access_token;
@@ -730,8 +741,6 @@ class Foxy_Client {
             'headers' => $headers,
             'body' => $body
         ]);
-
-        // $this->logger->log('debug', json_encode($result), array( 'source' => 'foxy-logs' ));
 
         $body = wp_remote_retrieve_body($result);
         $response_code = wp_remote_retrieve_response_code($result);
