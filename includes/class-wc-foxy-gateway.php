@@ -122,7 +122,7 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
             <h4>Please add following configuration in your Foxy Admin:</h4>
             <ol>
                 <li>
-                    Add <code><?php echo site_url('index.php') . '?rest_route=/foxy/v1/callback&fc_order_id=`${FC.json.order_id}`'; ?></code> as redirect URL in web receipt settings
+                    Add <code><?php echo site_url('index.php') . '?rest_route=/foxy/v1/callback&fc_order_id={{ order_id }}'; ?></code> as redirect URL in web receipt settings
                 </li>
             </ol>
         <?php
@@ -134,12 +134,6 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
                 'title' => __('Enable/Disable', 'foxy'),
                 'type' => 'checkbox',
                 'label' => __('Enable Foxy Payments', 'foxy'),
-                'default' => 'yes',
-            ],
-            'is_test' => [
-                'title' => __('Is Test', 'foxy'),
-                'type' => 'checkbox',
-                'label' => __('Using Foxy payments in test mode?(only for local testing, need to remove before finalizing)', 'foxy'),
                 'default' => 'yes',
             ],
             'client_id' => [

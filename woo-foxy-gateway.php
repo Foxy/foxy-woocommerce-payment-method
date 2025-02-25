@@ -262,15 +262,9 @@ function foxy_handle_sso(WP_REST_Request $request) {
 
     $foxy_payment_session_data = WC()->session->get('foxy_payment_session');
 
-    if (!$foxy_payment_session_data) {
-        $foxy_client = Foxy_Client::get_instance();
-        $endpoint = $foxy_client->get_sso_endpoint() . "/checkout?" ;
-        $foxy_customer_id = 0;
-    } else {
-        $endpoint = $foxy_payment_session_data['payment_link'];
-        $foxy_customer_id = $foxy_payment_session_data['customer_id'];
-        WC()->session->__unset('foxy_payment_session');
-    }
+    $endpoint = $foxy_payment_session_data['payment_link'] ?? Foxy_Client::get_instance()->get_sso_endpoint() . "/checkout?";
+    $foxy_customer_id = $foxy_payment_session_data['customer_id'] ?? 0;
+    WC()->session->__unset('foxy_payment_session');
     
     $timestamp = time() + 600;
     $foxycart_secret_key = get_transient('foxy_store_secret');

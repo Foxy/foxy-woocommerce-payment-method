@@ -511,7 +511,7 @@ class Foxy_Client {
         
         if ($sub_response->status_code == 200 && $sub_response->data["is_active"] && array_key_exists("fx:sub_token_url", $sub_response->data["_links"])) {
             $sub_token_url = $sub_response->data["_links"]["fx:sub_token_url"]["href"];
-            return str_replace('/cart?', '/checkout?', $sub_token_url);
+            return $sub_token_url;
         }
 
         return false;
@@ -529,24 +529,14 @@ class Foxy_Client {
             if ($subscription->get_meta('foxy_subscription_id')) {
                 $sub_token_url = $this->get_foxy_sub_token_url($subscription->get_meta('foxy_subscription_id'));
                 if ($sub_token_url) {
-                    $timestamp = time() + 600;
-                    $foxycart_secret_key = get_transient('foxy_store_secret');
-
                     $foxy_customer_id = $this->get_current_foxy_customer_id();
-                    $auth_token = sha1($foxy_customer_id . '|' . $timestamp . '|' . $foxycart_secret_key);
-
                     WC()->session->set('foxy_payment_session', [
-                        'payment_link' => $sub_token_url,
                         'change_payment_method' => true,
+                        'customer_id' => $foxy_customer_id ?? 0,
                         'wc_subscription_id' => $subscription_id
                     ]);
 
-                    $sub_token_url = $sub_token_url . '&' . http_build_query([
-                        'fc_auth_token' => $auth_token,
-                        'fc_customer_id' => $foxy_customer_id,
-                        'timestamp' => $timestamp,
-                        'cart' => 'checkout'
-                    ]);
+                    $sub_token_url = $sub_token_url . '&cart=checkout';
 
                     return $sub_token_url;
                 }
