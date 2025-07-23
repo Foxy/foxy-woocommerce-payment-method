@@ -161,7 +161,7 @@ class Foxy_Client {
     public function init_transaction_webhook($webhook_uri) {
         $webhook_response = $this->make_foxy_request($webhook_uri, 'GET');
         $all_webhooks = $webhook_response->data["_embedded"]["fx:webhooks"];
-        $webhook_url = "https://webhook.site/39c86945-f7b4-43f1-aedb-bd22a446e9f4";//site_url('index.php') . '?rest_route=/foxy/v1/webhook/transaction';
+        $webhook_url = site_url('index.php') . '?rest_route=/foxy/v1/webhook/transaction';
         $webhook_name = "WC_Store_Transaction_Webhook";
         $webhook_format = "json";
         $webhook_resource = "transaction";
@@ -219,7 +219,7 @@ class Foxy_Client {
         $wc_customer_id = $customer_data["id"];
         $user_meta = get_user_meta($wc_customer_id, "foxy-customer-id");
         
-        $foxy_customer_id = count($user_meta) ? $user_meta[0] : "";
+        $foxy_customer_id = $user_meta &&  count($user_meta) ? $user_meta[0] : "";
 
         if ($foxy_customer_id) {
             $data = [
@@ -295,7 +295,7 @@ class Foxy_Client {
     public function delete_customer($customer_data) {
         $user_meta = get_user_meta($customer_data["id"], "foxy-customer-id");
         // need to check this later. Might be that get_user_meta() return boolean false if no meta data found which will throw exception. If it returns empty array then this is okay
-        $foxy_customer_id = count($user_meta) ? $user_meta[0] : "";
+        $foxy_customer_id = $user_meta && count($user_meta) ? $user_meta[0] : "";
 
         if ($foxy_customer_id) {
             $data = [
@@ -618,6 +618,20 @@ class Foxy_Client {
                     "first_name" => $is_payment_method_change ? $subscription->get_billing_first_name() : $order->get_billing_first_name(),
                     "last_name" => $is_payment_method_change ? $subscription->get_billing_last_name() : $order->get_billing_last_name()
                 ]);
+
+                $customer_address_data = array();
+                if (!$is_payment_method_change) {
+                    $customer_address_data = [
+                        "billing" => $order->get_address('billing'),
+                        "shipping" => $order->get_address('shipping')
+                    ];
+                } else {
+                    $customer_address_data = [
+                        "billing" => $subscription->get_address('billing'),
+                        "shipping" => $subscription->get_address('shipping'),
+                    ];
+                }
+                $this->update_default_addresses($foxy_customer_id, $customer_address_data);
             }
 
             $timestamp = time() + 600;

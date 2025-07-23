@@ -110,15 +110,19 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
     $data = file_get_contents('php://input');
     $parsed_data = json_decode($data, true);
     
-    $event = $_SERVER['HTTP_FOXY_WEBHOOK_EVENT'];
+    $event = $_SERVER['HTTP_FOXY_WEBHOOK_EVENT'] ?? '';
     
     $logger = wc_get_logger();
+
+    $logger->debug('Webhook $_SERVER data: ' . json_encode($_SERVER), ['source' => ' foxy-logs']);
+    $logger->debug('Webhook request body: ' . json_encode($parsed_data), ['source' => ' foxy-logs']);
 
     $webhook_encryption_key = get_transient('foxy_webhook_encryption_key');
     // Verify the webhook payload
     $signature = hash_hmac('sha256', $data, $webhook_encryption_key);
-
-    if (!hash_equals($signature, $_SERVER['HTTP_FOXY_WEBHOOK_SIGNATURE'])) {
+    $foxyWebhookSignature = $_SERVER['HTTP_FOXY_WEBHOOK_SIGNATURE'] ?? '';
+    if (!hash_equals($signature, $foxyWebhookSignature)) {
+        $logger->error("Webhook Signature verification failed - data corrupted", ['source' => ' foxy-logs']);
         http_response_code(500);
         return new WP_REST_Response(
             "Signature verification failed - data corrupted",
@@ -128,6 +132,7 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
     }
 
     if (!is_array($parsed_data)) {
+        $logger->error("No data received in webhook", ['source' => ' foxy-logs']);
         return get_wp_rest_response("No data", 500);
     }
 
@@ -135,12 +140,12 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
      * check if we have an order in WC for the foxy transaction id we receive in webhook
      * If not found then return 400 error
      */
-    $foxy_transaction_id = $parsed_data["id"];
+    $foxy_transaction_id = $parsed_data["id"] ?? '';
     $logger->debug("Got Foxy transaction webhook `$event` for #$foxy_transaction_id", ['source' => ' foxy-logs']);
 
     if (!in_array($event, ['transaction/created', 'transaction/modified', 'transaction/captured', 'transaction/refunded', 'transaction/voided', 'transaction/refeed', 'transaction/verified'])) {
         $logger->error("Received unsupported webhook `$event` for transaction #$foxy_transaction_id", ['source' => ' foxy-logs']);
-        return get_wp_rest_response("webhook not supported", 400);
+        return get_wp_rest_response("webhook not supported", 200);
     }
 
     $args = array(
@@ -164,7 +169,7 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
             if (!$foxy_subscription_id) {
                 \WC_Admin_Notices::add_custom_notice( "foxy-webhook-transaction-not-found", "Received a transaction webhook from Foxy for transaction #$foxy_transaction_id but no corresponding order was found in WC" );
                 $logger->debug("WC order not found for Foxy Transaction #$foxy_transaction_id", ['source' => ' foxy-logs']);
-                return get_wp_rest_response("WC order not found for Foxy Transaction #$foxy_transaction_id", 400);
+                return get_wp_rest_response("WC order not found for Foxy Transaction #$foxy_transaction_id", 200);
             }
             $logger->debug("found Foxy sub #$foxy_subscription_id for Foxy Transaction #$foxy_transaction_id", ['source' => ' foxy-logs']);
 
@@ -180,7 +185,7 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
             if (!count($orders)) {
                 \WC_Admin_Notices::add_custom_notice( "foxy-webhook-transaction-not-found", "Received a transaction webhook from Foxy for transaction #$foxy_transaction_id (Foxy Subscription #$foxy_subscription_id was found) but no corresponding order was found in WC" );
                 $logger->debug("WC order not found for Foxy Transaction #$foxy_transaction_id (Subscription #$foxy_subscription_id was found)", ['source' => ' foxy-logs']);
-                return get_wp_rest_response("WC order not found for Foxy Transaction #$foxy_transaction_id", 400);
+                return get_wp_rest_response("WC order not found for Foxy Transaction #$foxy_transaction_id", 200);
             }
         } catch (Exception $e) {
             \WC_Admin_Notices::add_custom_notice( "foxy-webhook-transaction-error", "Something went wrong while processing the Foxy transaction webhook received for <b>#$foxy_transaction_id</b>" );
@@ -264,7 +269,6 @@ function foxy_handle_sso(WP_REST_Request $request) {
 
     $endpoint = $foxy_payment_session_data['payment_link'] ?? Foxy_Client::get_instance()->get_sso_endpoint() . "/checkout?";
     $foxy_customer_id = $foxy_payment_session_data['customer_id'] ?? 0;
-    WC()->session->__unset('foxy_payment_session');
     
     $timestamp = time() + 600;
     $foxycart_secret_key = get_transient('foxy_store_secret');
@@ -452,20 +456,4 @@ function foxy_load_gateway_block_support(): void {
             $payment_method_registry->register( new Foxy_Blocks_Support() );
         }
     );
-    // add_action(
-    //     'woocommerce_blocks_payment_method_type_registration',
-    //     function (Automattic\WooCommerce\Blocks\Payments\PaymentMethodRegistry $payment_method_registry) {
-    //         $container = Automattic\WooCommerce\Blocks\Package::container();
-    //         // // registers as shared instance.
-    //         $container->register(
-    //             Foxy_Blocks_Support::class,
-    //             function () {
-    //                 return new Foxy_Blocks_Support();
-    //             }
-    //         );
-    //         $payment_method_registry->register(
-    //             $container->get(Foxy_Blocks_Support::class)
-    //         );
-    //     },
-    // );
 }

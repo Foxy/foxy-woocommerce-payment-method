@@ -119,10 +119,13 @@ class Foxy_Payment_Gateway extends WC_Payment_Gateway {
     public function admin_options(): void {
         parent::admin_options();
         ?>
-            <h4>Please add following configuration in your Foxy Admin:</h4>
+            <h4>Notes:</h4>
             <ol>
                 <li>
                     Add <code><?php echo site_url('index.php') . '?rest_route=/foxy/v1/callback&fc_order_id={{ order_id }}'; ?></code> as redirect URL in web receipt settings
+                </li>
+                <li>
+                    <p style="color: #d63638">Please do not update client secrets with secrets of some other Foxy store once a subscription has been purchased or a customer is created. It may cause some unexpected behaviour.</p>
                 </li>
             </ol>
         <?php
