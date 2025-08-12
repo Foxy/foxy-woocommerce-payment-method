@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html id="fc">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+
+    <title>{{ config.store_name }} Receipt</title>
+    
+    <meta http-equiv="refresh" content="0; url='{{store_domain}}/index.php?rest_route=/foxy/v1/callback/&fc_order_id={{ order_id }}'" />    
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimal-ui">
+
+    <link href="{{ config.css_file }}" rel="stylesheet" media="all">
+
+    <!-- FC script insertion -->
+     {{ fc_header_content|raw }}
+    <!-- /FC script insertion -->
+</head>
+<body>
+<div class="fc-container">
+<div id="fc-receipt-container" class="fc-receipt__main fc-receipt__row">
+
+    <div id="fc-receipt__section--header" class="fc-receipt__section">
+        <div class="fc-container__row">
+            <div class="fc-container__grid--receipt--logo">
+            {% if config.store_logo_url %}
+                <img id="fc-logo--receipt" src="{{ config.cache_path }}{{ config.store_logo_url }}" class="fc-logo__image" alt="{{ store_name }}">
+            {% else %}
+                <h1 class="fc-logotype">{{ config.store_name }}</h1>
+            {% endif %}
+            </div>
+            <div class="fc-container__grid--receipt--transaction-subject">
+                <h3>
+                Please wait, redirecting to your receipt...
+                </h3>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+
+    <!--[if lt IE 9 ]>
+        <script src="{{ config.cdn_static_path }}scripts/respond/respond.1.4.2.js" charset="utf-8"></script>
+    <![endif]-->
+    <!-- FC footer script insertion -->
+     {% include template_from_string(fc_footer_content) %}
+    <!-- /FC footer scripts -->
+</body>
+</html>
