@@ -123,22 +123,22 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
     $foxyWebhookSignature = $_SERVER['HTTP_FOXY_WEBHOOK_SIGNATURE'] ?? '';
     if (!hash_equals($signature, $foxyWebhookSignature)) {
         $logger->error("Webhook Signature verification failed - data corrupted", ['source' => ' foxy-logs']);
-        http_response_code(500);
+        http_response_code(200);
         return new WP_REST_Response(
             "Signature verification failed - data corrupted",
-            500,
+            200,
             []
         );
     }
 
     if (!is_array($parsed_data)) {
         $logger->error("No data received in webhook", ['source' => ' foxy-logs']);
-        return get_wp_rest_response("No data", 500);
+        return get_wp_rest_response("No data", 200);
     }
 
     /**
      * check if we have an order in WC for the foxy transaction id we receive in webhook
-     * If not found then return 400 error
+     * If not found then return 400 error (for the time being we are sending 200 to avoid webhook deactivation by foxy)
      */
     $foxy_transaction_id = $parsed_data["id"] ?? '';
     $logger->debug("Got Foxy transaction webhook `$event` for #$foxy_transaction_id", ['source' => ' foxy-logs']);
@@ -190,7 +190,7 @@ function foxy_transaction_webhook(WP_REST_Request $request) {
         } catch (Exception $e) {
             \WC_Admin_Notices::add_custom_notice( "foxy-webhook-transaction-error", "Something went wrong while processing the Foxy transaction webhook received for <b>#$foxy_transaction_id</b>" );
             $logger->error($e->getMessage(), ['source' => ' foxy-logs']);
-            return get_wp_rest_response("Something went wrong", 500);
+            return get_wp_rest_response("Something went wrong", 200);
         }
     }
 
